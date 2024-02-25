@@ -1,4 +1,3 @@
-import { sql } from '@vercel/postgres';
 import {
   CustomerField,
   CustomersTableType,
@@ -9,37 +8,40 @@ import {
   Revenue,
 } from './definitions';
 import { formatCurrency } from './utils';
+import { query } from './database.js';
 
 export async function fetchRevenue() {
   // Add noStore() here to prevent the response from being cached.
   // This is equivalent to in fetch(..., {cache: 'no-store'}).
 
-  try {
-    // Artificially delay a response for demo purposes.
-    // Don't do this in production :)
+  // try {
+  // Artificially delay a response for demo purposes.
+  // Don't do this in production :)
 
-    // console.log('Fetching revenue data...');
-    // await new Promise((resolve) => setTimeout(resolve, 3000));
+  console.log('Fetching revenue data...');
+  // await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    const data = await sql<Revenue>`SELECT * FROM revenue`;
+  const data = await query<Revenue>(`SELECT * FROM revenue`);
+  // const data = await query('SELECT * FROM revenue;');
+  // console.log('Aqui!:', data);
 
-    // console.log('Data fetch completed after 3 seconds.');
+  // console.log('Data fetch completed after 3 seconds.');
 
-    return data.rows;
-  } catch (error) {
-    console.error('Database Error:', error);
-    throw new Error('Failed to fetch revenue data.');
-  }
+  return data.rows;
+  // } catch (error) {
+  //   console.error('Database Error:', error);
+  //   throw new Error('Failed to fetch revenue data.');
+  // }
 }
 
 export async function fetchLatestInvoices() {
   try {
-    const data = await sql<LatestInvoiceRaw>`
+    const data = await query<LatestInvoiceRaw>(`
       SELECT invoices.amount, customers.name, customers.image_url, customers.email, invoices.id
       FROM invoices
       JOIN customers ON invoices.customer_id = customers.id
       ORDER BY invoices.date DESC
-      LIMIT 5`;
+      LIMIT 5;`);
 
     const latestInvoices = data.rows.map((invoice) => ({
       ...invoice,
@@ -57,12 +59,12 @@ export async function fetchCardData() {
     // You can probably combine these into a single SQL query
     // However, we are intentionally splitting them to demonstrate
     // how to initialize multiple queries in parallel with JS.
-    const invoiceCountPromise = sql`SELECT COUNT(*) FROM invoices`;
-    const customerCountPromise = sql`SELECT COUNT(*) FROM customers`;
-    const invoiceStatusPromise = sql`SELECT
+    const invoiceCountPromise = query(`SELECT COUNT(*) FROM invoices;`);
+    const customerCountPromise = query(`SELECT COUNT(*) FROM customers;`);
+    const invoiceStatusPromise = query(`SELECT
          SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS "paid",
          SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) AS "pending"
-         FROM invoices`;
+         FROM invoices;`);
 
     const data = await Promise.all([
       invoiceCountPromise,
@@ -88,14 +90,12 @@ export async function fetchCardData() {
 }
 
 const ITEMS_PER_PAGE = 6;
-export async function fetchFilteredInvoices(
-  query: string,
-  currentPage: number,
-) {
+export async function fetchFilteredInvoices(sql: string, currentPage: number) {
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
   try {
-    const invoices = await sql<InvoicesTable>`
+    const invoices = await query<InvoicesTable>(
+      `
       SELECT
         invoices.id,
         invoices.amount,
@@ -107,14 +107,16 @@ export async function fetchFilteredInvoices(
       FROM invoices
       JOIN customers ON invoices.customer_id = customers.id
       WHERE
-        customers.name ILIKE ${`%${query}%`} OR
-        customers.email ILIKE ${`%${query}%`} OR
-        invoices.amount::text ILIKE ${`%${query}%`} OR
-        invoices.date::text ILIKE ${`%${query}%`} OR
-        invoices.status ILIKE ${`%${query}%`}
+        customers.name ILIKE '%$1%' OR
+        customers.email ILIKE '%$1%' OR
+        invoices.amount::text ILIKE '%$1%' OR
+        invoices.date::text ILIKE '%$1%' OR
+        invoices.status ILIKE '%$1%'
       ORDER BY invoices.date DESC
-      LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset}
-    `;
+      LIMIT $2 OFFSET $3
+    ;`,
+      [sql, ITEMS_PER_PAGE, offset],
+    );
 
     return invoices.rows;
   } catch (error) {
@@ -123,18 +125,21 @@ export async function fetchFilteredInvoices(
   }
 }
 
-export async function fetchInvoicesPages(query: string) {
+export async function fetchInvoicesPages(sql: string) {
   try {
-    const count = await sql`SELECT COUNT(*)
+    const count = await query(
+      `SELECT COUNT(*)
     FROM invoices
     JOIN customers ON invoices.customer_id = customers.id
     WHERE
-      customers.name ILIKE ${`%${query}%`} OR
-      customers.email ILIKE ${`%${query}%`} OR
-      invoices.amount::text ILIKE ${`%${query}%`} OR
-      invoices.date::text ILIKE ${`%${query}%`} OR
-      invoices.status ILIKE ${`%${query}%`}
-  `;
+      customers.name ILIKE '%$1%' OR
+      customers.email ILIKE '%$1%' OR
+      invoices.amount::text ILIKE '%$1%' OR
+      invoices.date::text ILIKE '%$1%' OR
+      invoices.status ILIKE '%$1%'
+      ;`,
+      [sql],
+    );
 
     const totalPages = Math.ceil(Number(count.rows[0].count) / ITEMS_PER_PAGE);
     return totalPages;
